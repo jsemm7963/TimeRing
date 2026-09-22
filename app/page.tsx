@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Archive, ArrowLeft, ArrowRight, ChevronDown, CirclePlus, Download, FileUp, MoonStar, Plus, Save, Trash2, X } from "lucide-react";
+import { Archive, ArrowLeft, ArrowRight, ChevronDown, CirclePlus, Download, FileUp, MoonStar, Plus, Save, Sun, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -16,6 +16,7 @@ type DayRecord = { id: string; startAt: string; endAt: string | null; createdAt:
 type TimeEvent = { id: string; dayId: string; title: string; content: string; startAt: string; endAt: string | null; color: string; createdAt: string; updatedAt: string; deletedAt?: string | null };
 type Review = { id: string; dayId: string; content: string; createdAt: string; updatedAt: string; deletedAt?: string | null };
 type StandardItem = { id: string; title: string; durationMinutes: number; color: string };
+type VisualTheme = "original" | "soft";
 type AppData = {
   schemaVersion: 1;
   deviceId: string;
@@ -37,7 +38,17 @@ type WebMcpContext = {
 };
 
 const STORAGE_KEY = "time-ring-journal-v1";
+const THEME_STORAGE_KEY = "time-ring-visual-theme";
 const COLORS = ["#013E75", "#A42423", "#A66F08", "#315762", "#4E6754", "#C05A28", "#211E1A"];
+const SOFT_COLORS: Record<string, string> = {
+  "#013E75": "#6B7BB4",
+  "#A42423": "#FFA62B",
+  "#A66F08": "#86C5FF",
+  "#315762": "#7FA921",
+  "#4E6754": "#4B5CC4",
+  "#C05A28": "#F8E6A0",
+  "#211E1A": "#A77BA8",
+};
 const COLOR_UPGRADES: Record<string, string> = {
   "#73A9D8": COLORS[0], "#F0A88C": COLORS[1], "#8CBFA5": COLORS[2], "#B9A1DC": COLORS[3],
   "#E5C16E": COLORS[4], "#77BFC5": COLORS[5], "#D98BA6": COLORS[6],
@@ -45,6 +56,17 @@ const COLOR_UPGRADES: Record<string, string> = {
   "#F59E0B": COLORS[4], "#00A9CE": COLORS[5], "#E8366F": COLORS[6],
 };
 const vividColor = (color: string) => COLOR_UPGRADES[color.toUpperCase()] ?? color;
+const displayColor = (color: string, theme: VisualTheme) => {
+  const original = vividColor(color);
+  return theme === "soft" ? (SOFT_COLORS[original.toUpperCase()] ?? original) : original;
+};
+const readableTextColor = (background: string) => {
+  const value = background.replace("#", "");
+  const channels = [0, 2, 4].map((offset) => Number.parseInt(value.slice(offset, offset + 2), 16) / 255)
+    .map((channel) => channel <= .04045 ? channel / 12.92 : ((channel + .055) / 1.055) ** 2.4);
+  const luminance = channels[0] * .2126 + channels[1] * .7152 + channels[2] * .0722;
+  return luminance > .34 ? "#33415D" : "#FFFAF3";
+};
 const id = () => crypto.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 const nowIso = () => new Date().toISOString();
 const pad = (value: number) => `${value}`.padStart(2, "0");
@@ -108,7 +130,7 @@ function splitEvent(event: TimeEvent, day: DayRecord, anchor: Date) {
   });
 }
 
-function DayRing({ day, events, onSelect }: { day: DayRecord; events: TimeEvent[]; onSelect: (event: TimeEvent) => void }) {
+function DayRing({ day, events, onSelect, theme }: { day: DayRecord; events: TimeEvent[]; onSelect: (event: TimeEvent) => void; theme: VisualTheme }) {
   const anchor = roundToHalfHour(day.startAt);
   const cx = 190, cy = 190, outerRadius = 128, ringWidth = 44, overflowRadius = 92, overflowWidth = 18, tickRadius = 165;
   const dayStartMs = new Date(day.startAt).getTime();
@@ -118,7 +140,7 @@ function DayRing({ day, events, onSelect }: { day: DayRecord; events: TimeEvent[
         const angle = i * 45;
         const labelPos = polar(cx, cy, tickRadius, angle);
         return <g key={i}>
-          <path d={arcPath(cx, cy, outerRadius, i * 45 + 2.2, (i + 1) * 45 - 2.2)} fill="none" stroke="#D9CFBC" strokeWidth={ringWidth} strokeLinecap="butt" />
+          <path d={arcPath(cx, cy, outerRadius, i * 45 + 2.2, (i + 1) * 45 - 2.2)} fill="none" stroke="var(--ring-base)" strokeWidth={ringWidth} strokeLinecap="butt" />
           <text x={labelPos.x} y={labelPos.y + 4} textAnchor="middle" className="ring-time-label">{fmtTime(addMinutes(anchor, i * 180).toISOString())}</text>
         </g>;
       })}
@@ -131,7 +153,7 @@ function DayRing({ day, events, onSelect }: { day: DayRecord; events: TimeEvent[
         const markerInner = polar(cx, cy, markerRadius - markerWidth / 2, markerAngle);
         const markerOuter = polar(cx, cy, markerRadius + markerWidth / 2, markerAngle);
         const segments = splitEvent(event, day, anchor);
-        const color = vividColor(event.color);
+        const color = displayColor(event.color, theme);
         return <g key={event.id} className="cursor-pointer" onClick={() => onSelect(event)} role="button" tabIndex={0}>
           <title>{`${event.title} · ${fmtTime(event.startAt)}${event.endAt ? `—${fmtTime(event.endAt)}` : ""}`}</title>
           {segments.map((segment, index) => {
@@ -141,7 +163,7 @@ function DayRing({ day, events, onSelect }: { day: DayRecord; events: TimeEvent[
           {!event.endAt && <line x1={markerInner.x} y1={markerInner.y} x2={markerOuter.x} y2={markerOuter.y} stroke={color} strokeWidth="1.5" opacity=".72" />}
         </g>;
       })}
-      <circle cx={cx} cy={cy} r="78" fill="#FFFBF0" stroke="#BDAE91" />
+      <circle cx={cx} cy={cy} r="78" fill="var(--ring-center-bg)" stroke="var(--ring-center-border)" />
       <text x={cx} y={cy - 22} textAnchor="middle" className="ring-center-kicker">从入睡开始</text>
       <text x={cx} y={cy + 12} textAnchor="middle" className="ring-center-time">{fmtTime(day.startAt)}</text>
       <text x={cx} y={cy + 38} textAnchor="middle" className="ring-center-date">{fmtDate(day.startAt)} · 周{fmtWeekday(day.startAt)}</text>
@@ -173,16 +195,16 @@ function compactStripTitle(title: string, width: number) {
   return title.length > limit ? `${title.slice(0, limit)}…` : title;
 }
 
-function StandardRing({ items }: { items: StandardItem[] }) {
+function StandardRing({ items, theme }: { items: StandardItem[]; theme: VisualTheme }) {
   let cursor = 0;
   return <svg viewBox="0 0 160 160" className="standard-ring" aria-label="标准日程">
-    <circle cx="80" cy="80" r="53" fill="none" stroke="#DED5C4" strokeWidth="30" />
+    <circle cx="80" cy="80" r="53" fill="none" stroke="var(--standard-ring-base)" strokeWidth="30" />
     {items.map((item) => {
       const start = cursor / 4, end = start + item.durationMinutes / 4;
       const label = polar(80, 80, 53, start + (end - start) / 2);
       cursor += item.durationMinutes;
       return <g key={item.id}>
-        <path d={arcPath(80, 80, 53, start, end)} fill="none" stroke={vividColor(item.color)} strokeWidth="30" opacity=".9"><title>{`${item.title} · ${formatDuration(item.durationMinutes)}`}</title></path>
+        <path d={arcPath(80, 80, 53, start, end)} fill="none" stroke={displayColor(item.color, theme)} strokeWidth="30" opacity=".9"><title>{`${item.title} · ${formatDuration(item.durationMinutes)}`}</title></path>
         <text x={label.x} y={label.y + 2.5} textAnchor="middle" className="standard-item-label">{item.title.length > 5 ? `${item.title.slice(0, 5)}…` : item.title}</text>
       </g>;
     })}
@@ -191,7 +213,7 @@ function StandardRing({ items }: { items: StandardItem[] }) {
   </svg>;
 }
 
-function DayStrip({ day, events, reviews }: { day: DayRecord; events: TimeEvent[]; reviews: Review[] }) {
+function DayStrip({ day, events, reviews, theme }: { day: DayRecord; events: TimeEvent[]; reviews: Review[]; theme: VisualTheme }) {
   const endAt = day.endAt ?? nowIso();
   const total = Math.max(1, minutesBetween(day.startAt, endAt));
   return <section className="review-row">
@@ -199,13 +221,16 @@ function DayStrip({ day, events, reviews }: { day: DayRecord; events: TimeEvent[
     <div className="day-strip" aria-label={`${fmtDate(day.startAt)}时间条`}>
       {events.map((event) => {
         const left = Math.max(0, Math.min(100, (minutesBetween(day.startAt, event.startAt) / total) * 100));
-        if (!event.endAt) return <span key={event.id} className="strip-marker" style={{ left: `${left}%`, borderColor: vividColor(event.color) }} title={`${event.title} ${fmtTime(event.startAt)}`}><i>{fmtTime(event.startAt)}</i></span>;
+        const color = displayColor(event.color, theme);
+        if (!event.endAt) return <span key={event.id} className="strip-marker" style={{ left: `${left}%`, borderColor: color }} title={`${event.title} ${fmtTime(event.startAt)}`}><i>{fmtTime(event.startAt)}</i></span>;
         const width = Math.max(.7, (minutesBetween(event.startAt, event.endAt) / total) * 100);
         const visibleWidth = Math.min(width, 100 - left);
         const duration = formatHalfHourDuration(minutesBetween(event.startAt, event.endAt));
         const compactDuration = formatCompactHalfHourDuration(minutesBetween(event.startAt, event.endAt));
         const compact = visibleWidth < 18;
-        return <span key={event.id} className={`strip-segment${compact ? " strip-segment-compact" : ""}`} style={{ left: `${left}%`, width: `${visibleWidth}%`, background: vividColor(event.color) }} title={`${event.title} · ${duration} · ${fmtTime(event.startAt)}—${fmtTime(event.endAt)}`}><span><b>{compactStripTitle(event.title, visibleWidth)}</b><em>{compact ? compactDuration : ` · ${duration}`}</em></span></span>;
+        const foreground = theme === "soft" ? readableTextColor(color) : "#FFFFFF";
+        const darkText = foreground === "#33415D";
+        return <span key={event.id} className={`strip-segment${compact ? " strip-segment-compact" : ""}${darkText ? " strip-segment-dark-text" : ""}`} style={{ left: `${left}%`, width: `${visibleWidth}%`, background: color, color: foreground }} title={`${event.title} · ${duration} · ${fmtTime(event.startAt)}—${fmtTime(event.endAt)}`}><span><b>{compactStripTitle(event.title, visibleWidth)}</b><em>{compact ? compactDuration : ` · ${duration}`}</em></span></span>;
       })}
     </div>
     {reviews.map((review) => <div key={review.id} className="saved-review"><span>{new Date(review.createdAt).toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}</span><p>{review.content}</p></div>)}
@@ -223,6 +248,7 @@ function mergeById<T extends { id: string; updatedAt: string }>(local: T[], inco
 
 export default function Home() {
   const [data, setData] = useState<AppData | null>(null);
+  const [theme, setTheme] = useState<VisualTheme | null>(null);
   const [tab, setTab] = useState("today");
   const [selectedDayId, setSelectedDayId] = useState<string | null>(null);
   const [eventDialog, setEventDialog] = useState(false);
@@ -237,6 +263,19 @@ export default function Home() {
   const [reviewText, setReviewText] = useState("");
   const [reviewTargetDayId, setReviewTargetDayId] = useState<string | null>(null);
   const importRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    const savedTheme = localStorage.getItem(THEME_STORAGE_KEY);
+    const initialTheme: VisualTheme = savedTheme === "soft" ? "soft" : "original";
+    document.documentElement.dataset.theme = initialTheme;
+    const frame = requestAnimationFrame(() => setTheme(initialTheme));
+    return () => cancelAnimationFrame(frame);
+  }, []);
+  useEffect(() => {
+    if (!theme) return;
+    document.documentElement.dataset.theme = theme;
+    localStorage.setItem(THEME_STORAGE_KEY, theme);
+  }, [theme]);
 
   useEffect(() => {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -375,11 +414,15 @@ export default function Home() {
   }
 
   if (!data) return <main className="app-shell loading-state">正在打开时间环记…</main>;
+  const activeTheme = theme ?? "original";
   const selectedEvents = selectedDay ? activeEvents.filter((event) => event.dayId === selectedDay.id).sort((a, b) => +new Date(a.startAt) - +new Date(b.startAt)) : [];
 
   return <main className="app-shell">
     <header className="app-header">
-      <button className="brand" onClick={() => setTab("today")}><span className="brand-mark"><MoonStar size={19} /></span><span>时间环记</span></button>
+      <div className="brand">
+        <button className="brand-mark theme-toggle" onClick={() => setTheme((current) => (current ?? "original") === "original" ? "soft" : "original")} aria-label={activeTheme === "original" ? "切换到柔和浅色" : "切换到原色系"} title={activeTheme === "original" ? "切换到柔和浅色" : "切换到原色系"}>{activeTheme === "original" ? <MoonStar size={19} /> : <Sun size={19} />}</button>
+        <button className="brand-home" onClick={() => setTab("today")}>时间环记</button>
+      </div>
       <div className="header-actions">
         <Button variant="ghost" size="sm" onClick={exportData}><Download />导出</Button>
         <Button variant="ghost" size="sm" onClick={() => importRef.current?.click()}><FileUp />导入</Button>
@@ -396,8 +439,8 @@ export default function Home() {
             <Button variant="ghost" size="icon" disabled={selectedIndex === sortedDays.length - 1} onClick={() => setSelectedDayId(sortedDays[selectedIndex + 1]?.id)} aria-label="后一个记录日"><ArrowRight /></Button>
           </section>
           <section className="ring-stage">
-            {data.standard.enabled && data.standard.items.length > 0 ? <button className="standard-corner" onClick={() => setStandardDialog(true)} aria-label="查看标准日程"><StandardRing items={data.standard.items} /></button> : <button className="add-standard" onClick={() => setStandardDialog(true)}><CirclePlus size={16} />添加标准盘</button>}
-            <DayRing day={selectedDay} events={selectedEvents} onSelect={openEvent} />
+            {data.standard.enabled && data.standard.items.length > 0 ? <button className="standard-corner" onClick={() => setStandardDialog(true)} aria-label="查看标准日程"><StandardRing items={data.standard.items} theme={activeTheme} /></button> : <button className="add-standard" onClick={() => setStandardDialog(true)}><CirclePlus size={16} />添加标准盘</button>}
+            <DayRing day={selectedDay} events={selectedEvents} onSelect={openEvent} theme={activeTheme} />
           </section>
           <section className="today-actions">
             <Button className="record-button" onClick={openNewEvent}><Plus />记录一个刻度</Button>
@@ -405,7 +448,7 @@ export default function Home() {
           </section>
           <section className="event-list">
             <div className="section-heading"><h2>这一天的记录</h2><span>{selectedEvents.length}条</span></div>
-            {selectedEvents.length ? selectedEvents.map((event) => <button key={event.id} className="event-row" onClick={() => openEvent(event)}><i style={{ background: vividColor(event.color) }} /><span className="event-time">{fmtTime(event.startAt)}{event.endAt ? `—${fmtTime(event.endAt)}` : ""}</span><span className="event-copy"><strong>{event.title}</strong>{event.content && <small>{event.content}</small>}</span><ChevronDown size={16} /></button>) : <p className="empty-copy">点击“记录一个刻度”，写下现在正在发生的事。</p>}
+            {selectedEvents.length ? selectedEvents.map((event) => <button key={event.id} className="event-row" onClick={() => openEvent(event)}><i style={{ background: displayColor(event.color, activeTheme) }} /><span className="event-time">{fmtTime(event.startAt)}{event.endAt ? `—${fmtTime(event.endAt)}` : ""}</span><span className="event-copy"><strong>{event.title}</strong>{event.content && <small>{event.content}</small>}</span><ChevronDown size={16} /></button>) : <p className="empty-copy">点击“记录一个刻度”，写下现在正在发生的事。</p>}
           </section>
         </> : <section className="first-day"><MoonStar size={30} /><h1>从一次入睡开始</h1><p>填写入睡时间，建立第一条记录日。</p><Button onClick={() => setNewDayDialog(true)}>开始记录</Button></section>}
       </TabsContent>
@@ -416,7 +459,7 @@ export default function Home() {
             {!activeReviews.length && <DropdownMenuItem disabled>还没有保存过复盘</DropdownMenuItem>}<DropdownMenuSeparator /><DropdownMenuItem onClick={() => setReviewTargetDayId(sortedDays.at(-1)?.id ?? null)}>回到最近14天</DropdownMenuItem>
           </DropdownMenuContent></DropdownMenu>
         </div>
-        <div className="review-list">{reviewDays.map((day) => <DayStrip key={day.id} day={day} events={activeEvents.filter((event) => event.dayId === day.id)} reviews={activeReviews.filter((review) => review.dayId === day.id)} />)}</div>
+        <div className="review-list">{reviewDays.map((day) => <DayStrip key={day.id} day={day} events={activeEvents.filter((event) => event.dayId === day.id)} reviews={activeReviews.filter((review) => review.dayId === day.id)} theme={activeTheme} />)}</div>
         {reviewTargetDayId && <section className="review-editor"><Label htmlFor="review-text">写下这次复盘</Label><Textarea id="review-text" value={reviewText} onChange={(event) => setReviewText(event.target.value)} placeholder="自由写下你看到的、想到的，或下一步想调整的事……" rows={7} /><Button onClick={saveReview} disabled={!reviewText.trim()}><Save />保存复盘</Button></section>}
       </TabsContent>
     </Tabs>
@@ -425,7 +468,7 @@ export default function Home() {
 
     <Dialog open={eventDialog} onOpenChange={setEventDialog}><DialogContent className="max-h-[90vh] overflow-y-auto"><DialogHeader><DialogTitle>{editingEvent ? "编辑记录" : "记录一个刻度"}</DialogTitle><DialogDescription>{editingEvent ? "结束时间可以稍后补充；未填写时只显示一个刻度。" : "先记录发生的时间和文字。"}</DialogDescription></DialogHeader><div className="form-stack"><Label htmlFor="event-time">时间</Label><Input id="event-time" type="datetime-local" value={eventStart} onChange={(event) => setEventStart(event.target.value)} /><Label htmlFor="event-title">题目</Label><Input id="event-title" value={eventTitle} onChange={(event) => setEventTitle(event.target.value)} placeholder="做了什么" /><Label htmlFor="event-content">内容</Label><Textarea id="event-content" value={eventContent} onChange={(event) => setEventContent(event.target.value)} placeholder="可以留空" rows={4} />{editingEvent && <><Label htmlFor="event-end">结束时间</Label><div className="end-time-row"><Input id="event-end" type="datetime-local" value={eventEnd} onChange={(event) => setEventEnd(event.target.value)} />{eventEnd && <Button variant="ghost" size="icon" onClick={() => setEventEnd("")} aria-label="清除结束时间"><X /></Button>}</div></>}</div><DialogFooter className="items-center sm:justify-between">{editingEvent ? <Button variant="ghost" className="text-red-600" onClick={deleteEvent}><Trash2 />删除</Button> : <span />}<Button onClick={saveEvent} disabled={!eventTitle.trim() || !eventStart}><Save />保存</Button></DialogFooter></DialogContent></Dialog>
 
-    <Dialog open={standardDialog} onOpenChange={setStandardDialog}><DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-xl"><DialogHeader><DialogTitle>标准日程</DialogTitle><DialogDescription>只填写内容和时间长度，标准盘不会生成实际记录。</DialogDescription></DialogHeader>{data.standard.items.length > 0 && <div className="standard-preview"><StandardRing items={data.standard.items} /></div>}<div className="standard-list">{data.standard.items.map((item) => <div key={item.id} className="standard-item"><span className="color-dot" style={{ background: vividColor(item.color) }} /><Input value={item.title} onChange={(event) => updateStandardItem(item.id, { title: event.target.value })} aria-label="项目名称" /><Input type="number" min="0.5" step="0.5" value={item.durationMinutes / 60} onChange={(event) => updateStandardItem(item.id, { durationMinutes: Math.max(30, Number(event.target.value) * 60) })} aria-label="持续小时数" /><span>小时</span><Button variant="ghost" size="icon" onClick={() => setData({ ...data, standard: { ...data.standard, items: data.standard.items.filter((entry) => entry.id !== item.id), updatedAt: nowIso() } })} aria-label="删除项目"><Trash2 /></Button></div>)}</div><Button variant="outline" onClick={addStandardItem}><Plus />添加一项</Button><DialogFooter className="sm:justify-between"><Button variant="ghost" onClick={() => { setData({ ...data, standard: { ...data.standard, enabled: false, updatedAt: nowIso() } }); setStandardDialog(false) }}>隐藏标准盘</Button><Button onClick={() => { setData({ ...data, standard: { ...data.standard, enabled: data.standard.items.length > 0, updatedAt: nowIso() } }); setStandardDialog(false); toast.success("标准盘已保存") }}><Save />保存</Button></DialogFooter></DialogContent></Dialog>
+    <Dialog open={standardDialog} onOpenChange={setStandardDialog}><DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-xl"><DialogHeader><DialogTitle>标准日程</DialogTitle><DialogDescription>只填写内容和时间长度，标准盘不会生成实际记录。</DialogDescription></DialogHeader>{data.standard.items.length > 0 && <div className="standard-preview"><StandardRing items={data.standard.items} theme={activeTheme} /></div>}<div className="standard-list">{data.standard.items.map((item) => <div key={item.id} className="standard-item"><span className="color-dot" style={{ background: displayColor(item.color, activeTheme) }} /><Input value={item.title} onChange={(event) => updateStandardItem(item.id, { title: event.target.value })} aria-label="项目名称" /><Input type="number" min="0.5" step="0.5" value={item.durationMinutes / 60} onChange={(event) => updateStandardItem(item.id, { durationMinutes: Math.max(30, Number(event.target.value) * 60) })} aria-label="持续小时数" /><span>小时</span><Button variant="ghost" size="icon" onClick={() => setData({ ...data, standard: { ...data.standard, items: data.standard.items.filter((entry) => entry.id !== item.id), updatedAt: nowIso() } })} aria-label="删除项目"><Trash2 /></Button></div>)}</div><Button variant="outline" onClick={addStandardItem}><Plus />添加一项</Button><DialogFooter className="sm:justify-between"><Button variant="ghost" onClick={() => { setData({ ...data, standard: { ...data.standard, enabled: false, updatedAt: nowIso() } }); setStandardDialog(false) }}>隐藏标准盘</Button><Button onClick={() => { setData({ ...data, standard: { ...data.standard, enabled: data.standard.items.length > 0, updatedAt: nowIso() } }); setStandardDialog(false); toast.success("标准盘已保存") }}><Save />保存</Button></DialogFooter></DialogContent></Dialog>
     <Toaster position="top-center" />
   </main>;
 }
