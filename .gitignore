@@ -44,3 +44,5 @@ next-env.d.ts
 /.codex/
 /outputs/
 /work/
+/release/
+/public/fonts/chill-round/*.woff2

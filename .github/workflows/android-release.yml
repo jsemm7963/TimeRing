@@ -1,0 +1,95 @@
+name: Build Android APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-release
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Set up pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@11.25.0 --activate
+
+      - name: Install web dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android platform
+        run: sdkmanager "platforms;android-36" "build-tools;36.0.0"
+
+      - name: Build offline web bundle
+        run: |
+          python3 -m pip install --quiet 'fonttools[woff]==4.61.1'
+          pnpm build:mobile
+
+      - name: Build signed APK
+        id: apk
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        shell: bash
+        run: |
+          test -n "$ANDROID_KEYSTORE_BASE64"
+          test -n "$ANDROID_KEYSTORE_PASSWORD"
+          KEYSTORE_PATH="$RUNNER_TEMP/timering-release.jks"
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE_PATH"
+          export ANDROID_KEYSTORE_PATH="$KEYSTORE_PATH"
+          VERSION_CODE="$GITHUB_RUN_NUMBER"
+          VERSION_NAME="1.0.$((GITHUB_RUN_NUMBER - 1))"
+          chmod +x android/gradlew
+          cd android
+          ./gradlew assembleRelease -PversionCode="$VERSION_CODE" -PversionName="$VERSION_NAME" --no-daemon
+          cd ..
+          mkdir -p release
+          APK="release/TimeRing-Android-v${VERSION_NAME}.apk"
+          cp android/app/build/outputs/apk/release/app-release.apk "$APK"
+          sha256sum "$APK" > "${APK}.sha256"
+          echo "version_name=$VERSION_NAME" >> "$GITHUB_OUTPUT"
+          echo "apk=$APK" >> "$GITHUB_OUTPUT"
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: TimeRing-Android-v${{ steps.apk.outputs.version_name }}
+          path: release/*
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION_NAME: ${{ steps.apk.outputs.version_name }}
+          APK: ${{ steps.apk.outputs.apk }}
+        shell: bash
+        run: |
+          TAG="android-v${VERSION_NAME}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$APK" "${APK}.sha256" --clobber
+          else
+            gh release create "$TAG" "$APK" "${APK}.sha256" --target "$GITHUB_SHA" --title "TimeRing Android v${VERSION_NAME}" --notes "时间环记 Android 离线安装包。下载 APK 后可直接安装；覆盖安装新版会保留本地记录。" --latest
+          fi

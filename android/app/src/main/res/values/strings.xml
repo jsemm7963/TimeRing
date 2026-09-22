@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">时间环记</string>
+    <string name="title_activity_main">时间环记</string>
+    <string name="package_name">com.jsemm7963.timering</string>
+    <string name="custom_url_scheme">com.jsemm7963.timering</string>
+</resources>

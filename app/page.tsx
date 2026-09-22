@@ -1,6 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { Capacitor } from "@capacitor/core";
+import { Directory, Encoding, Filesystem } from "@capacitor/filesystem";
+import { Share } from "@capacitor/share";
 import { Archive, ArrowLeft, ArrowRight, ChevronDown, CirclePlus, Download, FileUp, MoonStar, Plus, Save, Sun, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -259,6 +262,7 @@ export default function Home() {
   const [eventEnd, setEventEnd] = useState("");
   const [eventTitle, setEventTitle] = useState("");
   const [eventContent, setEventContent] = useState("");
+  const [eventColor, setEventColor] = useState(COLORS[0]);
   const [sleepStart, setSleepStart] = useState(toDateTimeLocal());
   const [reviewText, setReviewText] = useState("");
   const [reviewTargetDayId, setReviewTargetDayId] = useState<string | null>(null);
@@ -358,18 +362,19 @@ export default function Home() {
   }
   function openNewEvent() {
     if (!selectedDay) return;
-    setEditingEvent(null); setEventStart(toDateTimeLocal()); setEventEnd(""); setEventTitle(""); setEventContent(""); setEventDialog(true);
+    const nextColor = COLORS[activeEvents.filter((item) => item.dayId === selectedDay.id).length % COLORS.length];
+    setEditingEvent(null); setEventStart(toDateTimeLocal()); setEventEnd(""); setEventTitle(""); setEventContent(""); setEventColor(nextColor); setEventDialog(true);
   }
   function openEvent(event: TimeEvent) {
-    setEditingEvent(event); setEventStart(toDateTimeLocal(event.startAt)); setEventEnd(event.endAt ? toDateTimeLocal(event.endAt) : ""); setEventTitle(event.title); setEventContent(event.content); setEventDialog(true);
+    setEditingEvent(event); setEventStart(toDateTimeLocal(event.startAt)); setEventEnd(event.endAt ? toDateTimeLocal(event.endAt) : ""); setEventTitle(event.title); setEventContent(event.content); setEventColor(vividColor(event.color)); setEventDialog(true);
   }
   function saveEvent() {
     if (!data || !selectedDay || !eventTitle.trim() || !eventStart) return;
     const timestamp = nowIso();
     if (editingEvent) {
-      setData({ ...data, events: data.events.map((event) => event.id === editingEvent.id ? { ...event, title: eventTitle.trim(), content: eventContent.trim(), startAt: fromDateTimeLocal(eventStart), endAt: eventEnd ? fromDateTimeLocal(eventEnd) : null, updatedAt: timestamp } : event) });
+      setData({ ...data, events: data.events.map((event) => event.id === editingEvent.id ? { ...event, title: eventTitle.trim(), content: eventContent.trim(), startAt: fromDateTimeLocal(eventStart), endAt: eventEnd ? fromDateTimeLocal(eventEnd) : null, color: eventColor, updatedAt: timestamp } : event) });
     } else {
-      const event: TimeEvent = { id: id(), dayId: selectedDay.id, title: eventTitle.trim(), content: eventContent.trim(), startAt: fromDateTimeLocal(eventStart), endAt: null, color: COLORS[activeEvents.filter((item) => item.dayId === selectedDay.id).length % COLORS.length], createdAt: timestamp, updatedAt: timestamp };
+      const event: TimeEvent = { id: id(), dayId: selectedDay.id, title: eventTitle.trim(), content: eventContent.trim(), startAt: fromDateTimeLocal(eventStart), endAt: null, color: eventColor, createdAt: timestamp, updatedAt: timestamp };
       setData({ ...data, events: [...data.events, event] });
     }
     setEventDialog(false); toast.success(editingEvent ? "记录已更新" : "刻度已记录");
@@ -395,11 +400,23 @@ export default function Home() {
     if (!data) return;
     setData({ ...data, standard: { ...data.standard, items: data.standard.items.map((item) => item.id === itemId ? { ...item, ...patch } : item), updatedAt: nowIso() } });
   }
-  function exportData() {
+  async function exportData() {
     if (!data) return;
-    const blob = new Blob([JSON.stringify({ ...data, exportedAt: nowIso() }, null, 2)], { type: "application/json" });
+    const fileName = `时间环记-${new Date().toISOString().slice(0, 10)}.json`;
+    const contents = JSON.stringify({ ...data, exportedAt: nowIso() }, null, 2);
+    if (Capacitor.isNativePlatform()) {
+      try {
+        const backup = await Filesystem.writeFile({ path: fileName, data: contents, directory: Directory.Cache, encoding: Encoding.UTF8 });
+        await Share.share({ title: "时间环记备份", files: [backup.uri], dialogTitle: "保存或分享备份" });
+        toast.success("备份已生成");
+      } catch {
+        toast.error("备份未导出");
+      }
+      return;
+    }
+    const blob = new Blob([contents], { type: "application/json" });
     const url = URL.createObjectURL(blob), link = document.createElement("a");
-    link.href = url; link.download = `时间环记-${new Date().toISOString().slice(0, 10)}.json`; link.click(); URL.revokeObjectURL(url); toast.success("完整数据已导出");
+    link.href = url; link.download = fileName; link.click(); URL.revokeObjectURL(url); toast.success("完整数据已导出");
   }
   async function importData(file: File) {
     if (!data) return;
@@ -466,7 +483,7 @@ export default function Home() {
 
     <Dialog open={newDayDialog} onOpenChange={(open) => { if (sortedDays.length) setNewDayDialog(open) }}><DialogContent><DialogHeader><DialogTitle>{sortedDays.length ? "开始新的记录日" : "先记录入睡时间"}</DialogTitle><DialogDescription>第一条题目固定为“睡觉”。下一次睡觉会结束当前记录日。</DialogDescription></DialogHeader><div className="form-stack"><Label htmlFor="sleep-start">入睡时间</Label><Input id="sleep-start" type="datetime-local" value={sleepStart} onChange={(event) => setSleepStart(event.target.value)} /></div><DialogFooter><Button onClick={createDay}><MoonStar />开始这一天</Button></DialogFooter></DialogContent></Dialog>
 
-    <Dialog open={eventDialog} onOpenChange={setEventDialog}><DialogContent className="max-h-[90vh] overflow-y-auto"><DialogHeader><DialogTitle>{editingEvent ? "编辑记录" : "记录一个刻度"}</DialogTitle><DialogDescription>{editingEvent ? "结束时间可以稍后补充；未填写时只显示一个刻度。" : "先记录发生的时间和文字。"}</DialogDescription></DialogHeader><div className="form-stack"><Label htmlFor="event-time">时间</Label><Input id="event-time" type="datetime-local" value={eventStart} onChange={(event) => setEventStart(event.target.value)} /><Label htmlFor="event-title">题目</Label><Input id="event-title" value={eventTitle} onChange={(event) => setEventTitle(event.target.value)} placeholder="做了什么" /><Label htmlFor="event-content">内容</Label><Textarea id="event-content" value={eventContent} onChange={(event) => setEventContent(event.target.value)} placeholder="可以留空" rows={4} />{editingEvent && <><Label htmlFor="event-end">结束时间</Label><div className="end-time-row"><Input id="event-end" type="datetime-local" value={eventEnd} onChange={(event) => setEventEnd(event.target.value)} />{eventEnd && <Button variant="ghost" size="icon" onClick={() => setEventEnd("")} aria-label="清除结束时间"><X /></Button>}</div></>}</div><DialogFooter className="items-center sm:justify-between">{editingEvent ? <Button variant="ghost" className="text-red-600" onClick={deleteEvent}><Trash2 />删除</Button> : <span />}<Button onClick={saveEvent} disabled={!eventTitle.trim() || !eventStart}><Save />保存</Button></DialogFooter></DialogContent></Dialog>
+    <Dialog open={eventDialog} onOpenChange={setEventDialog}><DialogContent className="max-h-[90vh] overflow-y-auto"><DialogHeader><DialogTitle>{editingEvent ? "编辑记录" : "记录一个刻度"}</DialogTitle><DialogDescription>{editingEvent ? "结束时间可以稍后补充；未填写时只显示一个刻度。" : "先记录发生的时间和文字。"}</DialogDescription></DialogHeader><div className="form-stack"><Label htmlFor="event-time">时间</Label><Input id="event-time" type="datetime-local" value={eventStart} onChange={(event) => setEventStart(event.target.value)} /><Label htmlFor="event-title">题目</Label><Input id="event-title" value={eventTitle} onChange={(event) => setEventTitle(event.target.value)} placeholder="做了什么" /><Label id="event-color-label">颜色</Label><div className="event-color-picker" role="radiogroup" aria-labelledby="event-color-label">{COLORS.map((color, index) => <button key={color} type="button" role="radio" aria-checked={eventColor === color} aria-label={`颜色 ${index + 1}`} className={eventColor === color ? "selected" : ""} style={{ background: displayColor(color, activeTheme) }} onClick={() => setEventColor(color)} />)}</div><Label htmlFor="event-content">内容</Label><Textarea id="event-content" value={eventContent} onChange={(event) => setEventContent(event.target.value)} placeholder="可以留空" rows={4} />{editingEvent && <><Label htmlFor="event-end">结束时间</Label><div className="end-time-row"><Input id="event-end" type="datetime-local" value={eventEnd} onChange={(event) => setEventEnd(event.target.value)} />{eventEnd && <Button variant="ghost" size="icon" onClick={() => setEventEnd("")} aria-label="清除结束时间"><X /></Button>}</div></>}</div><DialogFooter className="items-center sm:justify-between">{editingEvent ? <Button variant="ghost" className="text-red-600" onClick={deleteEvent}><Trash2 />删除</Button> : <span />}<Button onClick={saveEvent} disabled={!eventTitle.trim() || !eventStart}><Save />保存</Button></DialogFooter></DialogContent></Dialog>
 
     <Dialog open={standardDialog} onOpenChange={setStandardDialog}><DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-xl"><DialogHeader><DialogTitle>标准日程</DialogTitle><DialogDescription>只填写内容和时间长度，标准盘不会生成实际记录。</DialogDescription></DialogHeader>{data.standard.items.length > 0 && <div className="standard-preview"><StandardRing items={data.standard.items} theme={activeTheme} /></div>}<div className="standard-list">{data.standard.items.map((item) => <div key={item.id} className="standard-item"><span className="color-dot" style={{ background: displayColor(item.color, activeTheme) }} /><Input value={item.title} onChange={(event) => updateStandardItem(item.id, { title: event.target.value })} aria-label="项目名称" /><Input type="number" min="0.5" step="0.5" value={item.durationMinutes / 60} onChange={(event) => updateStandardItem(item.id, { durationMinutes: Math.max(30, Number(event.target.value) * 60) })} aria-label="持续小时数" /><span>小时</span><Button variant="ghost" size="icon" onClick={() => setData({ ...data, standard: { ...data.standard, items: data.standard.items.filter((entry) => entry.id !== item.id), updatedAt: nowIso() } })} aria-label="删除项目"><Trash2 /></Button></div>)}</div><Button variant="outline" onClick={addStandardItem}><Plus />添加一项</Button><DialogFooter className="sm:justify-between"><Button variant="ghost" onClick={() => { setData({ ...data, standard: { ...data.standard, enabled: false, updatedAt: nowIso() } }); setStandardDialog(false) }}>隐藏标准盘</Button><Button onClick={() => { setData({ ...data, standard: { ...data.standard, enabled: data.standard.items.length > 0, updatedAt: nowIso() } }); setStandardDialog(false); toast.success("标准盘已保存") }}><Save />保存</Button></DialogFooter></DialogContent></Dialog>
     <Toaster position="top-center" />
